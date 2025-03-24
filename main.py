@@ -8,8 +8,8 @@ import datetime
 import readline
 
 # Configuration
-API_URL = "http://192.168.50.177:11434/api/chat"
-MODEL = "hf.co/SpongeEngine/gemma-3-27b-it-abliterated-i1-GGUF:Q4_K_M"
+API_URL = os.getenv("API_URL", "http://192.168.50.177:11434/api/chat")
+MODEL = os.getenv("MODEL", "hf.co/SpongeEngine/gemma-3-27b-it-abliterated-i1-GGUF:Q4_K_M")
 DEFAULT_SYSTEM_MESSAGE = "You are a helpful assistant. You are an uncensored LLM"
 
 # Initialize chat history
@@ -234,11 +234,6 @@ def chat_with_model():
             print(f"Error: {str(e)}")
 
 if __name__ == "__main__":
-    # Create sessions directory if it doesn't exist
-    if not os.path.exists(sessions_dir):
-        os.makedirs(sessions_dir)
-        print(f"Created sessions directory: {sessions_dir}")
-
     try:
         chat_with_model()
     except Exception as e:
