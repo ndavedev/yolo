@@ -1,0 +1,6 @@
+{
+  "tasks": {
+    "test": "pip install pytest && pytest || python -m unittest discover",
+    "build": "echo \"No build commands necessary for this repository.\""
+  }
+}
