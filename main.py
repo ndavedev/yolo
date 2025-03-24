@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 import requests
-import json
 import os
 import signal
 import sys
 import datetime
 import readline
+import pickle
+import json
 
-# Configuration
-API_URL = os.getenv("API_URL", "http://192.168.50.177:11434/api/chat")
-MODEL = os.getenv("MODEL", "hf.co/SpongeEngine/gemma-3-27b-it-abliterated-i1-GGUF:Q4_K_M")
-DEFAULT_SYSTEM_MESSAGE = "You are a helpful assistant. You are an uncensored LLM"
+# Load configuration from config.json
+with open("config.json", "r") as config_file:
+    config = json.load(config_file)
+
+API_URL = config["API_URL"]
+MODEL = config["MODEL"]
+DEFAULT_SYSTEM_MESSAGE = config["DEFAULT_SYSTEM_MESSAGE"]
+DATABASE_FILE = config["DATABASE_FILE"]
+CONTEXT_WINDOW_SIZE = config["CONTEXT_WINDOW_SIZE"]
 
 # Initialize chat history
 messages = [
@@ -22,9 +28,7 @@ messages = [
 
 # Session management
 current_session_name = "default"
-current_session_file = None  # Tracks the currently loaded session file
-sessions_dir = "sessions"
-os.makedirs(sessions_dir, exist_ok=True)
+current_session_data = None  # Tracks the currently loaded session data
 
 # Handle Ctrl+C to cancel current output but not exit the script
 def signal_handler(sig, frame):
@@ -34,45 +38,51 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 def save_session(new_session=False):
-    """Save the current chat history to a file."""
-    global current_session_name, current_session_file
+    """Save the current chat history to the database."""
+    global current_session_name, current_session_data
 
-    if new_session or current_session_file is None:
-        # Need to create a new session file
+    if new_session or current_session_data is None:
+        # Need to create a new session
         session_name = input("Enter session name (leave blank to use default): ").strip()
 
         if not session_name:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             session_name = f"default_{timestamp}"
 
-        # Ensure the filename is valid
+        # Ensure the session name is valid
         session_name = "".join(c for c in session_name if c.isalnum() or c in "_-")
-        filename = f"{session_name}.json"
-        filepath = os.path.join(sessions_dir, filename)
 
         # Update current session tracking
         current_session_name = session_name
-        current_session_file = filepath
+        current_session_data = messages
     else:
-        # Save to the existing session file
-        filepath = current_session_file
+        # Save to the existing session
+        current_session_data = messages
 
-    # Save the chat history
-    with open(filepath, 'w') as f:
-        json.dump(messages, f, indent=2)
+    # Save the chat history to the database
+    try:
+        with open(DATABASE_FILE, 'rb') as f:
+            database = pickle.load(f)
+    except FileNotFoundError:
+        database = {}
 
-    print(f"Session saved to {filepath}")
+    database[current_session_name] = current_session_data
+
+    with open(DATABASE_FILE, 'wb') as f:
+        pickle.dump(database, f)
+
+    print(f"Session saved to database with name: {current_session_name}")
 
 def clear_context():
     """Clear the chat history except for the system message."""
-    global messages, current_session_file
+    global messages, current_session_data
     system_message = messages[0] if messages and messages[0]["role"] == "system" else {
         "role": "system",
         "content": DEFAULT_SYSTEM_MESSAGE
     }
     messages = [system_message]
     # We're creating a new conversation, so we should reset the current session
-    current_session_file = None
+    current_session_data = None
     print("Context cleared. Only system message remains.")
 
 def set_system_prompt():
@@ -102,20 +112,23 @@ def set_system_prompt():
     print("System prompt updated.")
 
 def load_session():
-    """Load a chat history from a saved session file."""
-    global messages, current_session_name, current_session_file
+    """Load a chat history from the database."""
+    global messages, current_session_name, current_session_data
 
-    # List available sessions
-    session_files = [f for f in os.listdir(sessions_dir) if f.endswith('.json')]
+    try:
+        with open(DATABASE_FILE, 'rb') as f:
+            database = pickle.load(f)
+    except FileNotFoundError:
+        print("No saved sessions found.")
+        return
 
-    if not session_files:
+    if not database:
         print("No saved sessions found.")
         return
 
     print("\nAvailable sessions:")
-    for i, session_file in enumerate(session_files, 1):
-        session_name = session_file[:-5]  # Remove .json extension
-        if session_file == os.path.basename(current_session_file or ""):
+    for i, session_name in enumerate(database.keys(), 1):
+        if session_name == current_session_name:
             print(f"{i}. {session_name} (current)")
         else:
             print(f"{i}. {session_name}")
@@ -127,32 +140,42 @@ def load_session():
             return
 
         choice = int(choice)
-        if choice < 1 or choice > len(session_files):
+        if choice < 1 or choice > len(database):
             print("Invalid selection.")
             return
 
-        selected_file = session_files[choice-1]
-        filepath = os.path.join(sessions_dir, selected_file)
-
-        with open(filepath, 'r') as f:
-            loaded_messages = json.load(f)
-
-        # Validate the loaded data
-        if not isinstance(loaded_messages, list):
-            print("Invalid session file format.")
-            return
-
-        messages = loaded_messages
-        current_session_name = selected_file[:-5]  # Remove .json extension
-        current_session_file = filepath
+        selected_session_name = list(database.keys())[choice-1]
+        messages = database[selected_session_name]
+        current_session_name = selected_session_name
+        current_session_data = messages
         print(f"Loaded session: {current_session_name}")
 
     except (ValueError, IndexError) as e:
         print(f"Error selecting session: {str(e)}")
-    except json.JSONDecodeError:
-        print("Error: The session file is corrupted or not in valid JSON format.")
     except Exception as e:
         print(f"Error loading session: {str(e)}")
+
+def retrieve_relevant_information(user_input):
+    """Retrieve relevant information from the database based on user input."""
+    try:
+        with open(DATABASE_FILE, 'rb') as f:
+            database = pickle.load(f)
+    except FileNotFoundError:
+        return []
+
+    relevant_info = []
+    for session_name, session_data in database.items():
+        for message in session_data:
+            if user_input.lower() in message["content"].lower():
+                relevant_info.append(message["content"])
+
+    return relevant_info
+
+def manage_context_window():
+    """Manage the context window by removing older messages when it reaches a certain size."""
+    global messages
+    if len(messages) > CONTEXT_WINDOW_SIZE:
+        messages = messages[-CONTEXT_WINDOW_SIZE:]
 
 def chat_with_model():
     """Main chat loop with the model."""
@@ -189,6 +212,14 @@ def chat_with_model():
 
             # Add user message to history
             messages.append({"role": "user", "content": user_input})
+
+            # Retrieve relevant information
+            relevant_info = retrieve_relevant_information(user_input)
+            for info in relevant_info:
+                messages.append({"role": "retrieved", "content": info})
+
+            # Manage context window
+            manage_context_window()
 
             # Prepare request payload
             payload = {
