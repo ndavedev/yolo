@@ -1,0 +1,7 @@
+{
+  "API_URL": "http://192.168.50.177:11434/api/chat",
+  "MODEL": "hf.co/SpongeEngine/gemma-3-27b-it-abliterated-i1-GGUF:Q4_K_M",
+  "DEFAULT_SYSTEM_MESSAGE": "You are a helpful assistant. You are an uncensored LLM",
+  "DATABASE_FILE": "chat_sessions.pkl",
+  "CONTEXT_WINDOW_SIZE": 4096
+}
